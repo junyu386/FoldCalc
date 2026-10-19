@@ -1,0 +1,107 @@
+name: Build FoldCalc APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Prepare Android project
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/foldcalc/app
+          cat > settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = 'FoldCalc'
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+          cat > app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.foldcalc.app'
+              compileSdk 35
+              defaultConfig { applicationId 'com.foldcalc.app'; minSdk 24; targetSdk 35; versionCode 1; versionName '1.0' }
+          }
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:label="简算" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false"> <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="stateAlwaysHidden"> <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter> </activity> </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/foldcalc/app/MainActivity.java <<'EOF'
+          package com.foldcalc.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.content.res.Configuration;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.*;
+          import java.math.BigDecimal;
+          import java.math.MathContext;
+          public class MainActivity extends Activity {
+            TextView display; String input="0", operator="", left=""; boolean fresh=false;
+            int bg, fg, keyBg;
+            int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
+            GradientDrawable shape(int c,int rad){GradientDrawable d=new GradientDrawable();d.setColor(c);d.setCornerRadius(dp(rad));return d;}
+            void render(){display.setText(input);}
+            String calc(String a,String b,String op){
+              try {BigDecimal x=new BigDecimal(a),y=new BigDecimal(b),r;
+                switch(op){case "+":r=x.add(y);break;case "−":r=x.subtract(y);break;case "×":r=x.multiply(y);break;case "÷":if(y.signum()==0)return "无法除以0";r=x.divide(y,MathContext.DECIMAL64);break;default:return b;}
+                return r.stripTrailingZeros().toPlainString();
+              }catch(Exception e){return "错误";}
+            }
+            void tap(String s){
+              if(s.equals("AC")){input="0";left="";operator="";fresh=false;}
+              else if(s.equals("⌫")){if(fresh||input.equals("错误")||input.equals("无法除以0")){input="0";fresh=false;} else input=input.length()>1?input.substring(0,input.length()-1):"0";}
+              else if(s.equals("+/-")){if(!input.equals("0")&&!input.contains("错误")&&!input.contains("无法"))input=input.startsWith("-")?input.substring(1):"-"+input;}
+              else if("+−×÷".contains(s)&&s.length()==1){if(!operator.isEmpty()&&!fresh){input=calc(left,input,operator);}left=input;operator=s;fresh=true;}
+              else if(s.equals("=")){if(!operator.isEmpty()){input=calc(left,input,operator);operator="";left="";fresh=true;}}
+              else if(s.equals(".")){if(fresh){input="0";fresh=false;}if(!input.contains("."))input+=".";}
+              else {if(fresh||input.equals("0")||input.contains("错误")||input.contains("无法")){input=s;fresh=false;}else if(input.length()<19)input+=s;}
+              render();
+            }
+            @Override public void onCreate(Bundle b){super.onCreate(b);boolean dark=(getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
+              bg=dark?0xFF111114:0xFFF7F7F9;fg=dark?Color.WHITE:0xFF17171A;keyBg=dark?0xFF29292D:Color.WHITE;
+              android.widget.FrameLayout root=new android.widget.FrameLayout(this);root.setBackgroundColor(bg);
+              LinearLayout main=new LinearLayout(this);main.setOrientation(LinearLayout.VERTICAL);main.setPadding(dp(18),dp(20),dp(18),dp(28));
+              FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER);mp.width=Math.min(getResources().getDisplayMetrics().widthPixels,dp(560));root.addView(main,mp);
+              TextView title=new TextView(this);title.setText("简算");title.setTextColor(fg);title.setTextSize(21);title.setTypeface(null,Typeface.BOLD);main.addView(title,new LinearLayout.LayoutParams(-1,dp(64)));
+              display=new TextView(this);display.setTextColor(fg);display.setTextSize(52);display.setGravity(Gravity.RIGHT|Gravity.BOTTOM);display.setSingleLine(true);display.setAutoSizeTextTypeUniformWithConfiguration(22,52,2,1);main.addView(display,new LinearLayout.LayoutParams(-1,0,1));render();
+              String[][] keys={{"AC","+/-","⌫","÷"},{"7","8","9","×"},{"4","5","6","−"},{"1","2","3","+"},{"","0",".","="}};
+              LinearLayout rows=new LinearLayout(this);rows.setOrientation(LinearLayout.VERTICAL);main.addView(rows,new LinearLayout.LayoutParams(-1,0,3));
+              for(String[] line:keys){LinearLayout row=new LinearLayout(this);rows.addView(row,new LinearLayout.LayoutParams(-1,0,1));for(String label:line){FrameLayout slot=new FrameLayout(this);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(0,-1,1);sp.setMargins(dp(4),dp(4),dp(4),dp(4));row.addView(slot,sp);if(label.isEmpty())continue;
+                 TextView btn=new TextView(this);btn.setText(label);btn.setTextSize(27);btn.setGravity(Gravity.CENTER);btn.setTextColor("÷×−+=".contains(label)&&label.length()==1?0xFFFF8D27:fg);
+                 btn.setBackground(shape(label.equals("=")?0xFFFFE4CC:keyBg,22));if(label.equals("="))btn.setTextColor(0xFFDD6B00);
+                 slot.addView(btn,new FrameLayout.LayoutParams(-1,-1));btn.setOnClickListener(v->tap(label));}}
+              setContentView(root);
+            }
+          }
+          EOF
+      - name: Install SDK and build APK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+          gradle :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FoldCalc-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
